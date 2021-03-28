@@ -174,6 +174,45 @@ fn load_from_file(path: &Path) -> io::Result<String> {
     Ok(s)
 }
 
+pub fn validate_manifest(manifest_path: &Path) -> Result<bool, FatalError> {
+    let manifest_file_path = manifest_path.to_str().unwrap_or("");
+
+    let cargo_file = parse_cargo_config(&manifest_path)?;
+    match cargo_file.get("package") {
+        None => {
+            log::info!("Failed to find package");
+            return Ok(false);
+        }
+        Some(t) => {
+            let fields = [
+                "authors",
+                "license",
+                "description",
+                "homepage",
+                "readme",
+                "repository",
+            ];
+            for field in &fields {
+                match t.get(field) {
+                    None => {
+                        log::warn!(
+                            "Missing field \"{}\" in Manifest: {}",
+                            field,
+                            manifest_file_path
+                        );
+                        return Ok(false);
+                    }
+                    Some(_) => {
+                        //log::info!("Successfully Validated Field: {}: {}", field, v);
+                    }
+                }
+            }
+        }
+    }
+
+    return Ok(true);
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

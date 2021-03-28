@@ -554,6 +554,13 @@ fn release_packages<'m>(
         }
     }
 
+    // STEP 0.1 Check that Cargo.toml has all the required fields
+    for pkg in pkgs {
+        if !cargo::validate_manifest(&pkg.manifest_path)? {
+            return Ok(101);
+        }
+    }
+
     // STEP 1: Release Confirmation
     if !dry_run && !args.no_confirm {
         let prompt = if pkgs.len() == 1 {
@@ -581,6 +588,7 @@ fn release_packages<'m>(
 
     // STEP 2: update current version, save and commit
     let mut shared_commit = false;
+    let mut last_pkg_new_version = "";
     for pkg in pkgs {
         let dry_run = args.dry_run;
         let cwd = pkg.package_path;
@@ -644,6 +652,7 @@ fn release_packages<'m>(
 
             if ws_config.consolidate_commits() {
                 shared_commit = true;
+                last_pkg_new_version = new_version_string;
             } else {
                 let template = Template {
                     prev_version: Some(&pkg.prev_version.version_string),
@@ -665,6 +674,7 @@ fn release_packages<'m>(
         let shared_commit_msg = {
             let template = Template {
                 date: Some(NOW.as_str()),
+                version: Some(&last_pkg_new_version),
                 ..Default::default()
             };
             template.render(ws_config.pre_release_commit_message())
@@ -704,7 +714,14 @@ fn release_packages<'m>(
                 cargo::wait_for_publish(crate_name, &base.version_string, timeout, dry_run)?;
                 // HACK: Even once the index is updated, there seems to be another step before the publish is fully ready.
                 // We don't have a way yet to check for that, so waiting for now in hopes everything is ready
-                std::thread::sleep(std::time::Duration::from_secs(5));
+                if !dry_run {
+                    let extra_wait_time = std::time::Duration::from_secs(30);
+                    log::info!(
+                        "Waiting an extra {} seconds for publish...",
+                        extra_wait_time.as_secs()
+                    );
+                    std::thread::sleep(extra_wait_time);
+                }
             } else {
                 log::debug!("Not waiting for publish because the registry is not crates.io and doesn't get updated automatically");
             }
@@ -745,6 +762,7 @@ fn release_packages<'m>(
 
     // STEP 6: bump version
     let mut shared_commit = false;
+    let mut last_pkg_updated_version_string = "";
     for pkg in pkgs {
         if let Some(version) = pkg.post_version.as_ref() {
             let cwd = pkg.package_path;
@@ -785,6 +803,7 @@ fn release_packages<'m>(
 
             if ws_config.consolidate_commits() {
                 shared_commit = true;
+                last_pkg_updated_version_string = updated_version_string;
             } else {
                 let sign = pkg.config.sign_commit();
                 if !git::commit_all(cwd, &commit_msg, sign, dry_run)? {
@@ -797,6 +816,7 @@ fn release_packages<'m>(
         let shared_commit_msg = {
             let template = Template {
                 date: Some(NOW.as_str()),
+                next_version: Some(last_pkg_updated_version_string),
                 ..Default::default()
             };
             template.render(ws_config.post_release_commit_message())
